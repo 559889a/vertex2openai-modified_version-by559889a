@@ -6,6 +6,8 @@ colorTo: green
 sdk: docker
 app_port: 7860
 ---
+[中文文档](README_zh.md) | [English](README.md)
+
 
 # OpenAI to Gemini Adapter
 
