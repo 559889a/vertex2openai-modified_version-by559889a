@@ -1,12 +1,34 @@
 import httpx
 import asyncio
 import json
+import os
 from typing import List, Dict, Optional, Any
 
 from google import genai
 from google.genai import types
 
 import config as app_config
+
+def _get_local_models_config_path() -> Optional[str]:
+    """
+    获取本地模型配置文件路径，兼容 Docker 和本地运行环境。
+    返回第一个存在的路径，或 None 如果都不存在。
+    """
+    # 可能的路径列表（按优先级）
+    possible_paths = [
+        # Docker 环境：文件在 /app/vertexModels.json（与应用代码同目录）
+        os.path.join(os.path.dirname(__file__), "vertexModels.json"),
+        # 本地运行环境：文件在项目根目录
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "vertexModels.json"),
+        # 当前工作目录
+        "vertexModels.json",
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    
+    return None
 
 _model_cache: Optional[Dict[str, List[str]]] = None
 _native_model_cache: Optional[List[str]] = None
@@ -89,17 +111,57 @@ async def fetch_native_models_with_credentials(credential_manager, express_key_m
     return DEFAULT_GEMINI_MODELS.copy()
 
 
+def load_local_models_config() -> Optional[Dict[str, List[str]]]:
+    """
+    从本地 vertexModels.json 文件加载模型配置。
+    Returns None if loading or parsing fails.
+    """
+    config_path = _get_local_models_config_path()
+    if config_path is None:
+        print(f"INFO: Local models config not found in any expected location")
+        return None
+    
+    print(f"Loading model configuration from local file: {config_path}")
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if isinstance(data, dict) and \
+           "vertex_models" in data and isinstance(data["vertex_models"], list) and \
+           "vertex_express_models" in data and isinstance(data["vertex_express_models"], list):
+            print(f"Successfully loaded local model configuration: {len(data['vertex_models'])} vertex models, {len(data['vertex_express_models'])} express models.")
+            return {
+                "vertex_models": data["vertex_models"],
+                "vertex_express_models": data["vertex_express_models"]
+            }
+        else:
+            print(f"ERROR: Local model configuration has an invalid structure: {data}")
+            return None
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Failed to decode JSON from local model configuration: {e}")
+        return None
+    except Exception as e:
+        print(f"ERROR: An unexpected error occurred while loading local model configuration: {e}")
+        return None
+
+
 async def fetch_and_parse_models_config() -> Optional[Dict[str, List[str]]]:
     """
-    Fetches the model configuration JSON from the URL specified in app_config.
+    获取模型配置。优先从本地文件加载，如果本地文件不存在且配置了远程 URL 则从远程获取。
     Parses it and returns a dictionary with 'vertex_models' and 'vertex_express_models'.
     Returns None if fetching or parsing fails.
     """
+    # 优先尝试从本地文件加载
+    local_config = load_local_models_config()
+    if local_config is not None:
+        return local_config
+    
+    # 如果本地文件不存在，尝试从远程 URL 获取
     if not app_config.MODELS_CONFIG_URL:
-        print("INFO: MODELS_CONFIG_URL is not set, will use native API to fetch models.")
+        print("INFO: MODELS_CONFIG_URL is not set and local config not found, will use default model list.")
         return None
 
-    print(f"Fetching model configuration from: {app_config.MODELS_CONFIG_URL}")
+    print(f"Fetching model configuration from remote URL: {app_config.MODELS_CONFIG_URL}")
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(app_config.MODELS_CONFIG_URL)
@@ -109,7 +171,7 @@ async def fetch_and_parse_models_config() -> Optional[Dict[str, List[str]]]:
             if isinstance(data, dict) and \
                "vertex_models" in data and isinstance(data["vertex_models"], list) and \
                "vertex_express_models" in data and isinstance(data["vertex_express_models"], list):
-                print("Successfully fetched and parsed model configuration.")
+                print("Successfully fetched and parsed remote model configuration.")
                 return {
                     "vertex_models": data["vertex_models"],
                     "vertex_express_models": data["vertex_express_models"]

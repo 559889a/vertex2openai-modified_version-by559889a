@@ -9,6 +9,9 @@ RUN pip cache purge && pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ .
 
+# Copy model configuration file
+COPY vertexModels.json .
+
 # Create a directory for the credentials
 RUN mkdir -p /app/credentials
 
