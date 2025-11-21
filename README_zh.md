@@ -35,8 +35,7 @@ app_port: 7860
 
 本仓库会自动构建 Docker 镜像并发布到 GitHub Container Registry。你可以直接使用该镜像进行部署，无需自己构建。
 
-**镜像地址：** `ghcr.io/你的GitHub用户名/vertex2openai-adapter:latest`
-*(请将 `你的GitHub用户名` 替换为实际的用户名)*
+**镜像地址：** `ghcr.io/559889a/vertex2openai-modified_version-by559889a:latest`
 
 #### Docker Compose 示例
 
@@ -47,7 +46,7 @@ version: '3.8'
 
 services:
   vertex2openai:
-    image: ghcr.io/你的GitHub用户名/vertex2openai-adapter:latest
+    image: ghcr.io/559889a/vertex2openai-modified_version-by559889a:latest
     container_name: vertex2openai
     restart: unless-stopped
     ports:

@@ -37,8 +37,7 @@ This service acts as a compatibility layer, providing an OpenAI-compatible API i
 
 This repository automatically builds and publishes Docker images to the GitHub Container Registry. You can deploy directly using this image without building it yourself.
 
-**Image URL:** `ghcr.io/YOUR_GITHUB_USERNAME/vertex2openai-adapter:latest`
-*(Replace `YOUR_GITHUB_USERNAME` with your actual GitHub username)*
+**Image URL:** `ghcr.io/559889a/vertex2openai-modified_version-by559889a:latest`
 
 #### Docker Compose Example
 
@@ -49,7 +48,7 @@ version: '3.8'
 
 services:
   vertex2openai:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/vertex2openai-adapter:latest
+    image: ghcr.io/559889a/vertex2openai-modified_version-by559889a:latest
     container_name: vertex2openai
     restart: unless-stopped
     ports:
