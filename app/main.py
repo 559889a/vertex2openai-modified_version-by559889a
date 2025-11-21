@@ -10,6 +10,7 @@ from vertex_ai_init import init_vertex_ai
 # Routers
 from routes import models_api
 from routes import chat_api
+from routes import gemini_api
 
 app = FastAPI(title="OpenAI to Gemini Adapter")
 
@@ -28,8 +29,9 @@ express_key_manager = ExpressKeyManager()
 app.state.express_key_manager = express_key_manager # Store express key manager on app state
 
 # Include API routers
-app.include_router(models_api.router) 
+app.include_router(models_api.router)
 app.include_router(chat_api.router)
+app.include_router(gemini_api.router)
 
 @app.on_event("startup")
 async def startup_event():

@@ -162,21 +162,48 @@ async def chat_completions(fastapi_request: Request, request: OpenAIRequest, api
                 print(f"ERROR: {error_msg}")
                 return JSONResponse(status_code=500, content=create_openai_error_response(500, error_msg, "server_error"))
         
-        else: # Not an Express model request, therefore an SA credential model request for Gemini
-            print(f"INFO: Model '{request.model}' is an SA credential request for Gemini. Attempting SA credentials.")
+        else: # Not an Express model request, try SA first, then fallback to Express
+            print(f"INFO: Model '{request.model}' - checking authentication options.")
             rotated_credentials, rotated_project_id = credential_manager_instance.get_credentials()
             
             if rotated_credentials and rotated_project_id:
+                # SA 凭证可用
                 try:
                     client_to_use = genai.Client(vertexai=True, credentials=rotated_credentials, project=rotated_project_id, location="global")
                     print(f"INFO: Using SA credential for Gemini model {request.model} (project: {rotated_project_id})")
                 except Exception as e:
-                    client_to_use = None # Ensure it's None on failure
-                    error_msg = f"SA credential client initialization failed for Gemini model '{request.model}': {e}."
-                    print(f"ERROR: {error_msg}")
-                    return JSONResponse(status_code=500, content=create_openai_error_response(500, error_msg, "server_error"))
-            else: # No SA credentials available for an SA model request
-                error_msg = f"Model '{request.model}' requires SA credentials for Gemini, but none are available or loaded."
+                    client_to_use = None
+                    print(f"WARNING: SA credential client initialization failed: {e}. Will try Express fallback.")
+            
+            # 如果 SA 不可用或初始化失败，回退到 Express Key
+            if client_to_use is None and express_key_manager_instance.get_total_keys() > 0:
+                print(f"INFO: Falling back to Express API key for model: {request.model}")
+                total_keys = express_key_manager_instance.get_total_keys()
+                for attempt in range(total_keys):
+                    key_tuple = express_key_manager_instance.get_express_api_key()
+                    if key_tuple:
+                        original_idx, key_val = key_tuple
+                        try:
+                            if "gemini-2.5-pro" in base_model_name or "gemini-2.5-flash" in base_model_name or "gemini-3" in base_model_name:
+                                project_id = await discover_project_id(key_val)
+                                base_url = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global"
+                                client_to_use = genai.Client(
+                                    vertexai=True,
+                                    api_key=key_val,
+                                    http_options=types.HttpOptions(base_url=base_url)
+                                )
+                                client_to_use._api_client._http_options.api_version = None
+                            else:
+                                client_to_use = genai.Client(vertexai=True, api_key=key_val)
+                            print(f"INFO: Using Express API key (fallback) for model {request.model}")
+                            break
+                        except Exception as e:
+                            print(f"WARNING: Express key fallback attempt {attempt+1}/{total_keys} failed: {e}")
+                            client_to_use = None
+            
+            # 如果两者都不可用
+            if client_to_use is None:
+                error_msg = f"No authentication available for model '{request.model}'. Neither SA credentials nor Express API keys are configured/working."
                 print(f"ERROR: {error_msg}")
                 return JSONResponse(status_code=401, content=create_openai_error_response(401, error_msg, "authentication_error"))
 
