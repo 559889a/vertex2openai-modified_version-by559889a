@@ -5,7 +5,9 @@ services:
     build: .
     container_name: vertex2openai
     ports:
-      # Map host port to container port 8050
+      # 端口映射格式: "宿主机端口:容器端口"
+      # 默认将宿主机的 8050 端口映射到容器的 8050 端口
+      # 你可以在 .env 文件中修改 APP_PORT 来改变宿主机端口
       - "${APP_PORT:-8050}:8050"
     volumes:
       - ./credentials:/app/credentials
