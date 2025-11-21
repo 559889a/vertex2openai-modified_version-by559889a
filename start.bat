@@ -23,7 +23,11 @@ if not exist .env (
     exit /b 1
 )
 
+REM 代理设置（如需使用代理请取消下行注释）
+set PROXY_URL=http://127.0.0.1:7897
+
 echo 正在启动服务...
+echo 代理: %PROXY_URL%
 echo.
 python start.py
 

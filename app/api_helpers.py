@@ -26,7 +26,8 @@ from config import VERTEX_REASONING_TAG
 def is_retryable_error(error: Exception) -> bool:
     """判断错误是否可重试"""
     if isinstance(error, ClientError):
-        status_code = getattr(error, 'status_code', 0)
+        # ClientError uses 'code' for HTTP status code, not 'status_code'
+        status_code = getattr(error, 'code', 0)
         # 429 (Too Many Requests), 500, 502, 503, 504 可重试
         # 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden) 不可重试
         return status_code in [429, 500, 502, 503, 504]

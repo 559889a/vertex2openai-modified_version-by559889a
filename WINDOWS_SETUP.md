@@ -41,7 +41,7 @@ pip install -r app\requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 编辑 `.env` 文件，填入你的 Express API Key：
 
 ```env
-API_KEY=123456
+API_KEY=your_secure_password
 VERTEX_EXPRESS_API_KEY=你的_Express_API_Key
 ```
 
@@ -50,7 +50,7 @@ VERTEX_EXPRESS_API_KEY=你的_Express_API_Key
 编辑 `.env` 文件：
 
 ```env
-API_KEY=123456
+API_KEY=your_secure_password
 GOOGLE_CREDENTIALS_JSON={"type": "service_account", "project_id": "...", ...}
 ```
 
@@ -65,7 +65,7 @@ GOOGLE_CREDENTIALS_JSON={"type": "service_account", "project_id": "...", ...}
 
 3. 编辑 `.env` 文件，取消注释并修改：
    ```env
-   API_KEY=123456
+   API_KEY=your_secure_password
    CREDENTIALS_DIR=./credentials
    ```
 
@@ -124,14 +124,14 @@ if __name__ == "__main__":
 在命令提示符中（每次运行前需要设置）：
 
 ```cmd
-set API_KEY=123456
+set API_KEY=your_secure_password
 set VERTEX_EXPRESS_API_KEY=你的_Express_API_Key
 ```
 
 或在 PowerShell 中：
 
 ```powershell
-$env:API_KEY="123456"
+$env:API_KEY="your_secure_password"
 $env:VERTEX_EXPRESS_API_KEY="你的_Express_API_Key"
 ```
 
@@ -180,7 +180,7 @@ http://localhost:8050
 ### 查看可用模型
 
 ```bash
-curl http://localhost:8050/v1/models -H "Authorization: Bearer 123456"
+curl http://localhost:8050/v1/models -H "Authorization: Bearer your_secure_password"
 ```
 
 ### 发送聊天请求
@@ -188,7 +188,7 @@ curl http://localhost:8050/v1/models -H "Authorization: Bearer 123456"
 ```bash
 curl -X POST http://localhost:8050/v1/chat/completions ^
   -H "Content-Type: application/json" ^
-  -H "Authorization: Bearer 123456" ^
+  -H "Authorization: Bearer your_secure_password" ^
   -d "{\"model\": \"gemini-1.5-flash-latest\", \"messages\": [{\"role\": \"user\", \"content\": \"你好\"}]}"
 ```
 

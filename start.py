@@ -106,10 +106,11 @@ def main():
         # 切换到 app 目录作为工作目录
         os.chdir(app_dir)
         
+        port = int(os.getenv("APP_PORT", 8050))
         uvicorn.run(
             "main:app",
             host="0.0.0.0",
-            port=8050,
+            port=port,
             reload=True,
             log_level="info"
         )

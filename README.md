@@ -9,6 +9,15 @@ app_port: 7860 # Default Port exposed by Dockerfile, used by Hugging Face Spaces
 
 # OpenAI to Gemini Adapter
 
+> **Note:** This project is a modified version of the original [vertex2openai](https://github.com/gzzhongqi/vertex2openai) by gzzhongqi.
+>
+> **Key Modifications in this Fork:**
+> *   **Enhanced Security:** Removed hardcoded passwords and enforced environment variable configuration for API keys.
+> *   **Deployment Flexibility:** Added support for custom ports via `APP_PORT` environment variable.
+> *   **1Panel Support:** Added dedicated deployment guide and configuration for 1Panel.
+> *   **Model Updates:** Updated default model lists to include the latest Gemini models (Gemini 2.0, 2.5, 3.0).
+> *   **Documentation:** Improved documentation for Windows and Docker deployment.
+
 This service acts as a compatibility layer, providing an OpenAI-compatible API interface that translates requests to Google's Vertex AI Gemini models. This allows you to leverage the power of Gemini models (including Gemini 1.5 Pro and Flash) using tools and applications originally built for the OpenAI API.
 
 The codebase is designed with modularity and maintainability in mind, located primarily within the [`app/`](app/) directory.
@@ -71,6 +80,7 @@ Manage environment variables using a [`.env`](.env) file in the project root (ig
 
 ```env
 API_KEY="your_secure_api_key_here" # REQUIRED: Set a strong key for security
+APP_PORT=8050 # Optional: Port to expose on host
 
 # --- Choose *ONE* primary credential method ---
 # VERTEX_EXPRESS_API_KEY="your_vertex_express_key"          # Option 1: Express Key
@@ -148,6 +158,7 @@ The application selects credentials in this order:
 Managed in [`app/config.py`](app/config.py) and loaded from the environment:
 
 -   `API_KEY`: **Required.** Secret key to authenticate requests *to this adapter*.
+-   `APP_PORT`: Optional. Port to expose on the host (default: 8050).
 -   `VERTEX_EXPRESS_API_KEY`: Optional. Your Vertex AI Express API key for simplified authentication.
 -   `GOOGLE_CREDENTIALS_JSON`: Optional. String containing the JSON content of one or more service account keys (comma-separated for multiple). Takes precedence over `CREDENTIALS_DIR` for service accounts.
 -   `CREDENTIALS_DIR`: Optional. Path *within the container* where service account `.json` files are located. Used only if `GOOGLE_CREDENTIALS_JSON` is not set. (Default: `/app/credentials`)
