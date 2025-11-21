@@ -4,15 +4,17 @@ import time
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Request, Path, Query, HTTPException, Header
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+import asyncio
 
 from google.genai import types
 from google import genai
 
 from auth import get_api_key, validate_api_key
-from api_helpers import create_openai_error_response
+from api_helpers import create_openai_error_response, retry_with_backoff, is_retryable_error
 from project_id_discovery import discover_project_id
 from config import API_KEY
+from model_loader import get_alias_models, ALIAS_MODELS
 
 router = APIRouter(prefix="/gemini/v1beta", tags=["Gemini Native API"])
 
@@ -60,6 +62,12 @@ class GeminiContent(BaseModel):
     parts: List[Dict[str, Any]]
 
 
+class GeminiThinkingConfig(BaseModel):
+    thinkingBudget: Optional[int] = None  # 旧版参数
+    includeThoughts: Optional[bool] = None  # 旧版参数
+    thinkingLevel: Optional[str] = None  # 新版：low, medium, high 等
+
+
 class GeminiGenerationConfig(BaseModel):
     temperature: Optional[float] = None
     topP: Optional[float] = None
@@ -72,6 +80,7 @@ class GeminiGenerationConfig(BaseModel):
     responseSchema: Optional[Dict[str, Any]] = None
     presencePenalty: Optional[float] = None
     frequencyPenalty: Optional[float] = None
+    thinkingConfig: Optional[GeminiThinkingConfig] = None
 
 
 class GeminiSafetySettings(BaseModel):
@@ -83,6 +92,11 @@ class GeminiToolConfig(BaseModel):
     functionCallingConfig: Optional[Dict[str, Any]] = None
 
 
+class GeminiCodeExecution(BaseModel):
+    """代码执行工具配置"""
+    pass  # 空配置，启用即可
+
+
 class GeminiRequest(BaseModel):
     contents: List[GeminiContent]
     systemInstruction: Optional[GeminiContent] = None
@@ -91,6 +105,21 @@ class GeminiRequest(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None
     toolConfig: Optional[GeminiToolConfig] = None
     cachedContent: Optional[str] = None
+
+    @field_validator('tools', mode='before')
+    @classmethod
+    def validate_tools(cls, v):
+        """自动转换 tools 字段：如果是字典则转为列表"""
+        if v is None:
+            return v
+        if isinstance(v, dict):
+            # 如果是字典，转换为单元素列表
+            print(f"INFO: Converting tools from dict to list: {list(v.keys())}")
+            return [v]
+        if isinstance(v, list):
+            return v
+        # 其他情况抛出错误
+        raise ValueError(f"tools must be a list or dict, got {type(v)}")
 
     class Config:
         extra = "allow"
@@ -120,6 +149,21 @@ def build_generation_config(request: GeminiRequest) -> Dict[str, Any]:
             config["response_mime_type"] = gc.responseMimeType
         if gc.responseSchema:
             config["response_schema"] = gc.responseSchema
+        
+        # Thinking 配置 - 注意：thinking_level 和 thinking_budget 不能同时使用
+        if gc.thinkingConfig:
+            thinking_config = {}
+            # 新版 Gemini 3 参数优先
+            if gc.thinkingConfig.thinkingLevel is not None:
+                thinking_config["thinking_level"] = gc.thinkingConfig.thinkingLevel
+            elif gc.thinkingConfig.thinkingBudget is not None:
+                # 旧版参数 - 仅在没有 thinking_level 时使用
+                thinking_config["thinking_budget"] = gc.thinkingConfig.thinkingBudget
+            
+            if gc.thinkingConfig.includeThoughts is not None:
+                thinking_config["include_thoughts"] = gc.thinkingConfig.includeThoughts
+            if thinking_config:
+                config["thinking_config"] = thinking_config
     
     # 安全设置
     if request.safetySettings:
@@ -147,9 +191,29 @@ def build_generation_config(request: GeminiRequest) -> Dict[str, Any]:
         if parts_text:
             config["system_instruction"] = "\n".join(parts_text)
     
-    # Tools
+    # Tools - 支持 function_declarations, google_search, code_execution
     if request.tools:
-        config["tools"] = request.tools
+        tools_list = []
+        for tool in request.tools:
+            # Google Search grounding (支持多种键名)
+            if any(k in tool for k in ["googleSearch", "google_search", "googleSearchRetrieval", "google_search_retrieval"]):
+                tools_list.append(types.Tool(google_search=types.GoogleSearch()))
+                print(f"INFO: Added Google Search tool")
+            # Code execution
+            elif any(k in tool for k in ["codeExecution", "code_execution"]):
+                tools_list.append(types.Tool(code_execution=types.ToolCodeExecution()))
+                print(f"INFO: Added Code Execution tool")
+            # Function declarations (标准函数调用)
+            elif any(k in tool for k in ["functionDeclarations", "function_declarations"]):
+                func_decls = tool.get("functionDeclarations") or tool.get("function_declarations", [])
+                tools_list.append(types.Tool(function_declarations=func_decls))
+                print(f"INFO: Added {len(func_decls)} function declarations")
+            else:
+                # 尝试直接作为 Tool 对象传递
+                print(f"WARNING: Unknown tool format: {list(tool.keys())}, passing through")
+                tools_list.append(tool)
+        if tools_list:
+            config["tools"] = tools_list
     
     # Tool config
     if request.toolConfig and request.toolConfig.functionCallingConfig:
@@ -208,24 +272,7 @@ def convert_bytes_to_base64(obj: Any) -> Any:
 
 
 def convert_response_to_gemini_format(response: Any, model_name: str) -> Dict[str, Any]:
-    """将 SDK 响应转换为 Gemini API 原生格式 - 使用 SDK 自带的序列化"""
-    try:
-        # 尝试使用 SDK 的 model_dump 或 to_dict 方法
-        if hasattr(response, "model_dump"):
-            result = response.model_dump(exclude_none=True)
-            return convert_bytes_to_base64(result)
-        elif hasattr(response, "to_dict"):
-            result = response.to_dict()
-            return convert_bytes_to_base64(result)
-        elif hasattr(response, "_pb"):
-            # Protobuf 响应
-            from google.protobuf.json_format import MessageToDict
-            result = MessageToDict(response._pb, preserving_proto_field_name=False)
-            return convert_bytes_to_base64(result)
-    except Exception as e:
-        print(f"WARNING: SDK serialization failed: {e}, using manual conversion")
-    
-    # 回退到手动转换
+    """将 SDK 响应转换为 Gemini API 原生格式 - 纯手动转换确保类型安全"""
     result = {
         "candidates": [],
         "usageMetadata": {}
@@ -255,37 +302,35 @@ def convert_response_to_gemini_format(response: Any, model_name: str) -> Dict[st
                     for part in candidate.content.parts:
                         part_dict = {}
                         
-                        # 尝试使用 part 的原生序列化
-                        if hasattr(part, "model_dump"):
-                            try:
-                                part_dict = part.model_dump(exclude_none=True)
-                            except:
-                                pass
+                        # 手动提取每个字段，确保 bytes 被正确转换
+                        if hasattr(part, "text") and part.text is not None:
+                            part_dict["text"] = part.text
                         
-                        # 如果原生序列化失败或为空，手动处理
-                        if not part_dict:
-                            if hasattr(part, "text") and part.text is not None:
-                                part_dict["text"] = part.text
-                            if hasattr(part, "thought") and part.thought:
-                                part_dict["thought"] = True
-                            if hasattr(part, "thought_signature") and part.thought_signature:
-                                # bytes 需要转为 base64 编码
-                                sig = part.thought_signature
-                                if isinstance(sig, bytes):
-                                    part_dict["thoughtSignature"] = base64.b64encode(sig).decode('utf-8')
-                                else:
-                                    part_dict["thoughtSignature"] = sig
-                            if hasattr(part, "function_call") and part.function_call:
-                                fc = part.function_call
-                                part_dict["functionCall"] = {
-                                    "name": fc.name if hasattr(fc, "name") else "",
-                                    "args": dict(fc.args) if hasattr(fc, "args") and fc.args else {}
-                                }
-                            if hasattr(part, "inline_data") and part.inline_data:
-                                part_dict["inlineData"] = {
-                                    "mimeType": part.inline_data.mime_type,
-                                    "data": part.inline_data.data
-                                }
+                        if hasattr(part, "thought") and part.thought:
+                            part_dict["thought"] = True
+                        
+                        if hasattr(part, "thought_signature") and part.thought_signature:
+                            sig = part.thought_signature
+                            if isinstance(sig, bytes):
+                                part_dict["thoughtSignature"] = base64.b64encode(sig).decode('utf-8')
+                            else:
+                                part_dict["thoughtSignature"] = str(sig)
+                        
+                        if hasattr(part, "function_call") and part.function_call:
+                            fc = part.function_call
+                            part_dict["functionCall"] = {
+                                "name": fc.name if hasattr(fc, "name") else "",
+                                "args": dict(fc.args) if hasattr(fc, "args") and fc.args else {}
+                            }
+                        
+                        if hasattr(part, "inline_data") and part.inline_data:
+                            data = part.inline_data.data
+                            if isinstance(data, bytes):
+                                data = base64.b64encode(data).decode('utf-8')
+                            part_dict["inlineData"] = {
+                                "mimeType": part.inline_data.mime_type,
+                                "data": data
+                            }
                         
                         if part_dict:
                             cand_dict["content"]["parts"].append(part_dict)
@@ -388,6 +433,28 @@ async def get_gemini_client(
         return client, actual_model
 
 
+def resolve_alias_model(model: str, request: GeminiRequest) -> tuple[str, GeminiRequest]:
+    """解析别名模型，返回实际模型名和修改后的请求"""
+    if model in ALIAS_MODELS:
+        alias_config = ALIAS_MODELS[model]
+        actual_model = alias_config["base_model"]
+        
+        # 注入 thinking 配置
+        if "thinking_level" in alias_config:
+            if request.generationConfig is None:
+                request.generationConfig = GeminiGenerationConfig()
+            if request.generationConfig.thinkingConfig is None:
+                request.generationConfig.thinkingConfig = GeminiThinkingConfig()
+            # 只在用户没有指定时才注入
+            if request.generationConfig.thinkingConfig.thinkingLevel is None:
+                request.generationConfig.thinkingConfig.thinkingLevel = alias_config["thinking_level"]
+        
+        print(f"INFO: Resolved alias model '{model}' -> '{actual_model}' with thinking_level={alias_config.get('thinking_level')}")
+        return actual_model, request
+    
+    return model, request
+
+
 @router.post("/models/{model}:generateContent")
 async def generate_content(
     fastapi_request: Request,
@@ -400,18 +467,25 @@ async def generate_content(
         body = await fastapi_request.json()
         request = GeminiRequest(**body)
         
-        client, actual_model = await get_gemini_client(fastapi_request, model)
+        # 解析别名模型
+        resolved_model, request = resolve_alias_model(model, request)
+        
+        client, actual_model = await get_gemini_client(fastapi_request, resolved_model)
         
         gen_config = build_generation_config(request)
         contents = build_contents(request)
         
         print(f"INFO: Gemini native generateContent for model: {actual_model}")
         
-        response = await client.aio.models.generate_content(
-            model=actual_model,
-            contents=contents,
-            config=gen_config
-        )
+        # 使用重试机制 - 10次重试，1秒间隔
+        async def _generate_call():
+            return await client.aio.models.generate_content(
+                model=actual_model,
+                contents=contents,
+                config=gen_config
+            )
+        
+        response = await retry_with_backoff(_generate_call, max_retries=10, delay=1.0)
         
         result = convert_response_to_gemini_format(response, actual_model)
         return JSONResponse(content=result)
@@ -441,7 +515,10 @@ async def stream_generate_content(
         body = await fastapi_request.json()
         request = GeminiRequest(**body)
         
-        client, actual_model = await get_gemini_client(fastapi_request, model)
+        # 解析别名模型
+        resolved_model, request = resolve_alias_model(model, request)
+        
+        client, actual_model = await get_gemini_client(fastapi_request, resolved_model)
         
         gen_config = build_generation_config(request)
         contents = build_contents(request)
@@ -449,44 +526,65 @@ async def stream_generate_content(
         print(f"INFO: Gemini native streamGenerateContent for model: {actual_model}")
         
         async def stream_generator():
-            try:
-                stream = await client.aio.models.generate_content_stream(
-                    model=actual_model,
-                    contents=contents,
-                    config=gen_config
-                )
-                
-                chunk_count = 0
-                async for chunk in stream:
-                    chunk_count += 1
-                    # 调试：打印原始响应结构
-                    if chunk_count == 1:
-                        print(f"DEBUG: First chunk type: {type(chunk)}")
-                        print(f"DEBUG: First chunk dir: {[a for a in dir(chunk) if not a.startswith('_')]}")
-                        if hasattr(chunk, 'candidates') and chunk.candidates:
-                            print(f"DEBUG: candidates count: {len(chunk.candidates)}")
-                            if chunk.candidates[0]:
-                                cand = chunk.candidates[0]
-                                print(f"DEBUG: candidate dir: {[a for a in dir(cand) if not a.startswith('_')]}")
-                                if hasattr(cand, 'content') and cand.content:
-                                    print(f"DEBUG: content dir: {[a for a in dir(cand.content) if not a.startswith('_')]}")
-                                    if hasattr(cand.content, 'parts') and cand.content.parts:
-                                        print(f"DEBUG: parts count: {len(cand.content.parts)}")
-                                        for i, p in enumerate(cand.content.parts):
-                                            print(f"DEBUG: part[{i}] dir: {[a for a in dir(p) if not a.startswith('_')]}")
-                                            print(f"DEBUG: part[{i}] raw: {p}")
+            max_retries = 10
+            retry_delay = 1.0
+            for attempt in range(max_retries):
+                try:
+                    stream = await client.aio.models.generate_content_stream(
+                        model=actual_model,
+                        contents=contents,
+                        config=gen_config
+                    )
                     
-                    chunk_data = convert_response_to_gemini_format(chunk, actual_model)
-                    yield f"data: {json.dumps(chunk_data)}\n\n"
-                
-                print(f"DEBUG: Stream completed, total chunks: {chunk_count}")
-                
-            except Exception as e:
-                print(f"ERROR: Stream error: {e}")
-                import traceback
-                traceback.print_exc()
-                error_data = {"error": {"code": 500, "message": str(e), "status": "INTERNAL"}}
-                yield f"data: {json.dumps(error_data)}\n\n"
+                    chunk_count = 0
+                    async for chunk in stream:
+                        chunk_count += 1
+                        # 调试：打印 thought 相关信息
+                        if hasattr(chunk, 'candidates') and chunk.candidates:
+                            for cand in chunk.candidates:
+                                if hasattr(cand, 'content') and cand.content and hasattr(cand.content, 'parts') and cand.content.parts:
+                                    for i, p in enumerate(cand.content.parts):
+                                        thought_val = getattr(p, 'thought', None)
+                                        text_val = getattr(p, 'text', None)
+                                        if thought_val:
+                                            print(f"DEBUG chunk {chunk_count}: part[{i}] is THOUGHT, text={text_val[:50] if text_val else None}...")
+                        
+                        chunk_data = convert_response_to_gemini_format(chunk, actual_model)
+                        
+                        # 使用自定义 encoder 处理 bytes
+                        class BytesEncoder(json.JSONEncoder):
+                            def default(self, obj):
+                                if isinstance(obj, bytes):
+                                    return base64.b64encode(obj).decode('utf-8')
+                                return super().default(obj)
+                        
+                        yield f"data: {json.dumps(chunk_data, cls=BytesEncoder)}\n\n"
+                    
+                    print(f"DEBUG: Stream completed, total chunks: {chunk_count}")
+                    return  # 成功完成
+                    
+                except Exception as e:
+                    last_error = e
+                    
+                    if not is_retryable_error(e):
+                        print(f"ERROR: Stream error (non-retryable): {e}")
+                        import traceback
+                        traceback.print_exc()
+                        error_data = {"error": {"code": 500, "message": str(e), "status": "INTERNAL"}}
+                        yield f"data: {json.dumps(error_data)}\n\n"
+                        return
+                    
+                    if attempt < max_retries - 1:  # 还有重试机会
+                        print(f"WARNING: Stream error (attempt {attempt + 1}/{max_retries}): {e}")
+                        print(f"INFO: Retrying stream in {retry_delay}s...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        print(f"ERROR: Stream error (all {max_retries} retries exhausted): {e}")
+                        import traceback
+                        traceback.print_exc()
+                        error_data = {"error": {"code": 500, "message": str(e), "status": "INTERNAL"}}
+                        yield f"data: {json.dumps(error_data)}\n\n"
+                        return
         
         return StreamingResponse(
             stream_generator(),
@@ -531,6 +629,15 @@ async def list_models(
                 "name": f"models/{model_id}",
                 "displayName": model_id,
                 "description": f"Gemini model: {model_id}",
+                "supportedGenerationMethods": ["generateContent", "streamGenerateContent"]
+            })
+        
+        # 添加别名模型到列表
+        for alias_name, alias_config in ALIAS_MODELS.items():
+            models.append({
+                "name": f"models/{alias_name}",
+                "displayName": alias_name,
+                "description": f"Alias for {alias_config['base_model']} with thinking_level={alias_config.get('thinking_level', 'default')}",
                 "supportedGenerationMethods": ["generateContent", "streamGenerateContent"]
             })
         

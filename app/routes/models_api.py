@@ -2,7 +2,7 @@ import time
 from fastapi import APIRouter, Depends, Request
 from typing import List, Dict, Any
 from auth import get_api_key
-from model_loader import get_native_models, refresh_native_models_cache
+from model_loader import get_native_models, refresh_native_models_cache, get_alias_models
 
 router = APIRouter()
 
@@ -32,6 +32,19 @@ async def list_models(fastapi_request: Request, api_key: str = Depends(get_api_k
             "permission": [],
             "root": model_id,
             "parent": None
+        })
+    
+    # 添加别名模型
+    alias_models = get_alias_models()
+    for alias_name, alias_config in alias_models.items():
+        model_list.append({
+            "id": alias_name,
+            "object": "model",
+            "created": current_time,
+            "owned_by": "google",
+            "permission": [],
+            "root": alias_config["base_model"],
+            "parent": alias_config["base_model"]
         })
 
     return {"object": "list", "data": model_list}

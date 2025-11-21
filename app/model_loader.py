@@ -30,6 +30,25 @@ DEFAULT_GEMINI_MODELS = [
     "gemini-3-pro-image-generation-preview",
 ]
 
+# 别名模型配置 - 自动注入 thinking 配置
+ALIAS_MODELS = {
+    "gemini-3-pro-preview-high": {
+        "base_model": "gemini-3-pro-preview",
+        "thinking_level": "high",
+        "description": "Gemini 3 Pro with high thinking level (maximum reasoning depth)"
+    },
+    "gemini-3-pro-preview-low": {
+        "base_model": "gemini-3-pro-preview",
+        "thinking_level": "low",
+        "description": "Gemini 3 Pro with low thinking level (minimal latency)"
+    }
+}
+
+
+def get_alias_models() -> dict:
+    """返回别名模型配置"""
+    return ALIAS_MODELS
+
 
 async def fetch_native_models_with_credentials(credential_manager, express_key_manager) -> List[str]:
     """

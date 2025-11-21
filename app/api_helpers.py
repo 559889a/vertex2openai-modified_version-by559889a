@@ -7,7 +7,8 @@ from typing import List, Dict, Any, Callable, Union, Optional
 from fastapi.responses import JSONResponse, StreamingResponse
 from google.auth.transport.requests import Request as AuthRequest
 from google.genai import types
-from openai import AsyncOpenAI 
+from google.genai.errors import ClientError
+from openai import AsyncOpenAI
 
 
 from models import OpenAIRequest, OpenAIMessage
@@ -20,6 +21,48 @@ from message_processing import (
 )
 import config as app_config
 from config import VERTEX_REASONING_TAG
+
+
+def is_retryable_error(error: Exception) -> bool:
+    """判断错误是否可重试"""
+    if isinstance(error, ClientError):
+        status_code = getattr(error, 'status_code', 0)
+        # 429 (Too Many Requests), 500, 502, 503, 504 可重试
+        # 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden) 不可重试
+        return status_code in [429, 500, 502, 503, 504]
+    # 其他类型的异常默认可重试（网络错误等）
+    return True
+
+
+async def retry_with_backoff(
+    func: Callable,
+    *args,
+    max_retries: int = 10,
+    delay: float = 1.0,
+    **kwargs
+):
+    """带固定延迟的重试机制 - 默认10次，每次间隔1秒"""
+    last_exception = None
+    
+    for attempt in range(max_retries):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            last_exception = e
+            
+            if not is_retryable_error(e):
+                print(f"ERROR: Non-retryable error, failing immediately: {type(e).__name__} - {str(e)}")
+                raise
+            
+            if attempt < max_retries - 1:
+                print(f"WARNING: Attempt {attempt + 1}/{max_retries} failed: {type(e).__name__} - {str(e)[:200]}")
+                print(f"INFO: Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+            else:
+                print(f"ERROR: All {max_retries} attempts failed")
+                raise
+    
+    raise last_exception
 
 class StreamingReasoningProcessor:
     def __init__(self, tag_name: str = VERTEX_REASONING_TAG):
@@ -174,7 +217,7 @@ def create_generation_config(request: OpenAIRequest) -> Dict[str, Any]:
                         function_declarations.append(declaration)
 
     if function_declarations:
-        config["tools"] = [{"function_declarations": function_declarations}]
+        config["tools"] = [types.Tool(function_declarations=function_declarations)]
 
     # 2. Add tool_config (based on tool_choice)
     tool_config = None
@@ -450,32 +493,55 @@ async def execute_gemini_call(
         else: # True Streaming
             response_id_for_stream = f"chatcmpl-realstream-{int(time.time())}"
             async def _gemini_real_stream_generator_inner():
-                try:
-                    stream_gen_obj = await current_client.aio.models.generate_content_stream(
-                        model=model_to_call, 
-                        contents=actual_prompt_for_call,
-                        config=gen_config_dict # Pass the dictionary directly
-                    )
-                    async for chunk_item_call in stream_gen_obj:
-                        yield convert_chunk_to_openai(chunk_item_call, request_obj.model, response_id_for_stream, 0)
-                    yield "data: [DONE]\n\n"
-                except Exception as e_stream_call:
-                    err_msg_detail_stream = f"Streaming Error (Gemini API, model string: '{model_to_call}'): {type(e_stream_call).__name__} - {str(e_stream_call)}"
-                    print(f"ERROR: {err_msg_detail_stream}")
-                    s_err = str(e_stream_call); s_err = s_err[:1024]+"..." if len(s_err)>1024 else s_err
-                    err_resp = create_openai_error_response(500,s_err,"server_error")
-                    j_err = json.dumps(err_resp)
-                    if not is_auto_attempt: 
-                        yield f"data: {j_err}\n\n"
+                max_retries = 10
+                retry_delay = 1.0
+                for attempt in range(max_retries):
+                    try:
+                        stream_gen_obj = await current_client.aio.models.generate_content_stream(
+                            model=model_to_call,
+                            contents=actual_prompt_for_call,
+                            config=gen_config_dict
+                        )
+                        async for chunk_item_call in stream_gen_obj:
+                            yield convert_chunk_to_openai(chunk_item_call, request_obj.model, response_id_for_stream, 0)
                         yield "data: [DONE]\n\n"
-                    raise e_stream_call
+                        return  # 成功完成，退出
+                    except Exception as e_stream_call:
+                        err_msg_detail_stream = f"Streaming Error (Gemini API, model string: '{model_to_call}'): {type(e_stream_call).__name__} - {str(e_stream_call)}"
+                        
+                        if not is_retryable_error(e_stream_call):
+                            print(f"ERROR: {err_msg_detail_stream} (non-retryable)")
+                            s_err = str(e_stream_call); s_err = s_err[:1024]+"..." if len(s_err)>1024 else s_err
+                            err_resp = create_openai_error_response(500,s_err,"server_error")
+                            j_err = json.dumps(err_resp)
+                            if not is_auto_attempt:
+                                yield f"data: {j_err}\n\n"
+                                yield "data: [DONE]\n\n"
+                            raise e_stream_call
+                        
+                        if attempt < max_retries - 1:  # 还有重试机会
+                            print(f"WARNING: {err_msg_detail_stream} (attempt {attempt + 1}/{max_retries})")
+                            print(f"INFO: Retrying stream in {retry_delay}s...")
+                            await asyncio.sleep(retry_delay)
+                        else:
+                            print(f"ERROR: {err_msg_detail_stream} (all {max_retries} retries exhausted)")
+                            s_err = str(e_stream_call); s_err = s_err[:1024]+"..." if len(s_err)>1024 else s_err
+                            err_resp = create_openai_error_response(500,s_err,"server_error")
+                            j_err = json.dumps(err_resp)
+                            if not is_auto_attempt:
+                                yield f"data: {j_err}\n\n"
+                                yield "data: [DONE]\n\n"
+                            raise e_stream_call
             return StreamingResponse(_gemini_real_stream_generator_inner(), media_type="text/event-stream")
-    else: # Non-streaming
-        response_obj_call = await current_client.aio.models.generate_content(
-            model=model_to_call, 
-            contents=actual_prompt_for_call,
-            config=gen_config_dict # Pass the dictionary directly
-        )
+    else: # Non-streaming with retry
+        async def _non_stream_call():
+            return await current_client.aio.models.generate_content(
+                model=model_to_call,
+                contents=actual_prompt_for_call,
+                config=gen_config_dict
+            )
+        
+        response_obj_call = await retry_with_backoff(_non_stream_call, max_retries=10, delay=1.0)
         if hasattr(response_obj_call, 'prompt_feedback') and \
            hasattr(response_obj_call.prompt_feedback, 'block_reason') and \
            response_obj_call.prompt_feedback.block_reason:

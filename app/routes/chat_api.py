@@ -23,6 +23,7 @@ from api_helpers import (
 )
 from openai_handler import OpenAIDirectHandler
 from project_id_discovery import discover_project_id
+from model_loader import ALIAS_MODELS
 
 router = APIRouter()
 
@@ -62,6 +63,14 @@ async def chat_completions(fastapi_request: Request, request: OpenAIRequest, api
         is_2k_image_model = request.model.endswith("-2k")
         is_4k_image_model = request.model.endswith("-4k")
         base_model_name = request.model # Start with the full model name
+        
+        # 检查是否为别名模型 (使用共享的 ALIAS_MODELS 配置)
+        alias_thinking_level = None
+        if base_model_name in ALIAS_MODELS:
+            alias_config = ALIAS_MODELS[base_model_name]
+            base_model_name = alias_config["base_model"]
+            alias_thinking_level = alias_config.get("thinking_level")
+            print(f"INFO: Resolved alias model -> '{alias_config['base_model']}' with thinking_level={alias_thinking_level}")
 
         # Determine base_model_name by stripping known prefixes and suffixes
         # Order of stripping: Prefixes first, then suffixes.
@@ -104,7 +113,15 @@ async def chat_completions(fastapi_request: Request, request: OpenAIRequest, api
         # This will now be a dictionary
         gen_config_dict = create_generation_config(request)
 
-        if "gemini-2.5-flash" in base_model_name or "gemini-2.5-pro" in base_model_name:
+        # 如果是别名模型，注入 thinking_level 配置
+        if alias_thinking_level:
+            if "thinking_config" not in gen_config_dict:
+                gen_config_dict["thinking_config"] = {}
+            gen_config_dict["thinking_config"]["thinking_level"] = alias_thinking_level
+            gen_config_dict["thinking_config"]["include_thoughts"] = True
+            print(f"INFO: Injected thinking_level={alias_thinking_level} for alias model")
+
+        if "gemini-2.5-flash" in base_model_name or "gemini-2.5-pro" in base_model_name or "gemini-3" in base_model_name:
             if "thinking_config" not in gen_config_dict:
                 gen_config_dict["thinking_config"] = {}
             gen_config_dict["thinking_config"]["include_thoughts"] = True
