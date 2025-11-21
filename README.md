@@ -9,16 +9,25 @@ app_port: 7860
 
 # OpenAI to Gemini Adapter
 
-> **Note:** This project is a modified version of the original [vertex2openai](https://github.com/gzzhongqi/vertex2openai) by gzzhongqi.
+> **Note:** This project is a heavily modified version of the original [vertex2openai](https://github.com/gzzhongqi/vertex2openai) by gzzhongqi.
 >
-> **Key Modifications in this Fork:**
-> *   **Enhanced Security:** Removed hardcoded passwords and enforced environment variable configuration for API keys.
-> *   **Deployment Flexibility:** Added support for custom ports via `APP_PORT` environment variable.
-> *   **Automated Builds:** Integrated GitHub Actions for automatic Docker image building and publishing to GitHub Container Registry (GHCR).
-> *   **Health Check:** Added `/health` endpoint for container orchestration health monitoring.
-> *   **Model Updates:** Updated default model lists to include the latest Gemini models (Gemini 2.0, 2.5, 3.0).
+> **Major Feature Updates & Modifications:**
+> *   **Gemini Native Format Support:** Added full support for Gemini's native API format, including built-in Google Search grounding and visual capabilities.
+> *   **Enhanced Vision Support:** OpenAI-compatible endpoints now support visual inputs (image analysis).
+> *   **Thinking Models:** Introduced `gemini-3-pro-preview-high` and `gemini-3-pro-preview-low` alias models, corresponding to different reasoning depths (thinking levels).
+> *   **Prompt Engineering:** Completely overhauled prompt processing logic for better compatibility.
+> *   **Security & Deployment:** Removed hardcoded secrets, added `APP_PORT` configuration, and integrated GitHub Actions for automated Docker builds.
+> *   **Health Monitoring:** Added `/health` endpoint.
 
-This service acts as a compatibility layer, providing an OpenAI-compatible API interface that translates requests to Google's Vertex AI Gemini models. This allows you to leverage the power of Gemini models (including Gemini 1.5 Pro and Flash) using tools and applications originally built for the OpenAI API.
+This service acts as a compatibility layer, providing an OpenAI-compatible API interface that translates requests to Google's Vertex AI Gemini models. This allows you to leverage the power of Gemini models (including Gemini 1.5 Pro, Flash, and the new Gemini 3.0 series) using tools and applications originally built for the OpenAI API.
+
+## Known Issues & Limitations
+
+*   **OpenAI Format Search:** Calling search tools via the OpenAI-compatible format is currently unstable or non-functional.
+*   **Gemini Format Context:** When using the Gemini native format, web page context retrieval may fail.
+*   **Chain of Thought (CoT):** The Gemini native format currently has issues returning the full Chain of Thought (CoT) reasoning process.
+*   **Gemini 3.0 Pro:** It appears that `gemini-3-pro` models may not consistently return reasoning chains via the API (based on current Google documentation/behavior).
+*   **Image Generation:** Image generation models have not been fully tested; stability is not guaranteed.
 
 ## Deployment Guide
 
@@ -100,6 +109,8 @@ The service provides a health check endpoint at `/health`. You can use this for 
 
 -   `GET /v1/models`: Lists models accessible via the configured credentials/Vertex project.
 -   `POST /v1/chat/completions`: The main endpoint for generating text, mimicking the OpenAI chat completions API.
+-   `POST /gemini/v1beta/models/{model}:generateContent`: Gemini native API endpoint.
+-   `POST /gemini/v1beta/models/{model}:streamGenerateContent`: Gemini native streaming API endpoint.
 -   `GET /health`: Health check endpoint.
 
 ### Authentication
