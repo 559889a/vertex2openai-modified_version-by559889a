@@ -1,3 +1,4 @@
+import time
 from fastapi import FastAPI, Depends # Depends might be used by root endpoint
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -62,4 +63,13 @@ async def root():
     return {
         "status": "ok",
         "message": "OpenAI to Gemini Adapter is running."
+    }
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring tools.
+    """
+    return {
+        "status": "healthy",
+        "timestamp": time.time()
     }

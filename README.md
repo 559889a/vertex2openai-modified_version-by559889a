@@ -4,7 +4,7 @@ emoji: 🔄☁️
 colorFrom: blue
 colorTo: green
 sdk: docker
-app_port: 7860 # Default Port exposed by Dockerfile, used by Hugging Face Spaces
+app_port: 7860
 ---
 
 # OpenAI to Gemini Adapter
@@ -14,98 +14,85 @@ app_port: 7860 # Default Port exposed by Dockerfile, used by Hugging Face Spaces
 > **Key Modifications in this Fork:**
 > *   **Enhanced Security:** Removed hardcoded passwords and enforced environment variable configuration for API keys.
 > *   **Deployment Flexibility:** Added support for custom ports via `APP_PORT` environment variable.
-> *   **1Panel Support:** Added dedicated deployment guide and configuration for 1Panel.
+> *   **Automated Builds:** Integrated GitHub Actions for automatic Docker image building and publishing to GitHub Container Registry (GHCR).
+> *   **Health Check:** Added `/health` endpoint for container orchestration health monitoring.
 > *   **Model Updates:** Updated default model lists to include the latest Gemini models (Gemini 2.0, 2.5, 3.0).
-> *   **Documentation:** Improved documentation for Windows and Docker deployment.
 
 This service acts as a compatibility layer, providing an OpenAI-compatible API interface that translates requests to Google's Vertex AI Gemini models. This allows you to leverage the power of Gemini models (including Gemini 1.5 Pro and Flash) using tools and applications originally built for the OpenAI API.
 
-The codebase is designed with modularity and maintainability in mind, located primarily within the [`app/`](app/) directory.
+## Deployment Guide
 
-## Key Features
+### 1. Using Pre-built Docker Image (Recommended)
 
--   **OpenAI-Compatible Endpoints:** Provides standard [`/v1/chat/completions`](app/routes/chat_api.py:0) and [`/v1/models`](app/routes/models_api.py:0) endpoints.
--   **Broad Model Support:** Seamlessly translates requests for various Gemini models (e.g., `gemini-1.5-pro-latest`, `gemini-1.5-flash-latest`). Check the [`/v1/models`](app/routes/models_api.py:0) endpoint for currently available models based on your Vertex AI Project.
--   **Multiple Credential Management Methods:**
-    -   **Vertex AI Express API Key:** Use a specific [`VERTEX_EXPRESS_API_KEY`](app/config.py:0) for simplified authentication with eligible models.
-    -   **Google Cloud Service Accounts:**
-        -   Provide the JSON key content directly via the [`GOOGLE_CREDENTIALS_JSON`](app/config.py:0) environment variable.
-        -   Place multiple service account `.json` files in a designated directory ([`CREDENTIALS_DIR`](app/config.py:0)).
--   **Smart Credential Selection:**
-    -   Uses the `ExpressKeyManager` for dedicated Vertex AI Express API key handling.
-    -   Employs `CredentialManager` for robust service account management.
-    -   Supports **round-robin rotation** ([`ROUNDROBIN=true`](app/config.py:0)) when multiple service account credentials are provided (either via [`GOOGLE_CREDENTIALS_JSON`](app/config.py:0) or [`CREDENTIALS_DIR`](app/config.py:0)), distributing requests across credentials.
--   **Streaming & Non-Streaming:** Handles both response types correctly.
--   **OpenAI Direct Mode Enhancements:** Includes tag-based extraction for reasoning/tool use information when interacting directly with certain OpenAI models (if configured).
--   **Dockerized:** Ready for deployment via Docker Compose locally or on platforms like Hugging Face Spaces.
--   **Centralized Configuration:** Environment variables managed via [`app/config.py`](app/config.py).
+This repository automatically builds and publishes Docker images to the GitHub Container Registry. You can deploy directly using this image without building it yourself.
 
-## Hugging Face Spaces Deployment (Recommended)
+**Image URL:** `ghcr.io/YOUR_GITHUB_USERNAME/vertex2openai-adapter:latest`
+*(Replace `YOUR_GITHUB_USERNAME` with your actual GitHub username)*
 
-1.  **Create a Space:** On Hugging Face Spaces, create a new "Docker" SDK Space.
-2.  **Upload Files:** Add all project files ([`app/`](app/) directory, [`.gitignore`](.gitignore), [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml), [`requirements.txt`](app/requirements.txt), etc.) to the repository.
-3.  **Configure Secrets:** In Space settings -> Secrets, add:
-    *   `API_KEY`: Your desired API key to protect this adapter service (required).
-    *   *Choose one credential method:*
-        *   `GOOGLE_CREDENTIALS_JSON`: The **full content** of your Google Cloud service account JSON key file(s). Separate multiple keys with commas if providing more than one within this variable.
-        *   Or provide individual files if your deployment setup supports mounting volumes (less common on standard HF Spaces).
-    *   `VERTEX_EXPRESS_API_KEY` (Optional): Add your Vertex AI Express API key if you plan to use Express Mode.
-    *   `ROUNDROBIN` (Optional): Set to `true` to enable round-robin rotation for service account credentials.
-    *   Other variables from the "Key Environment Variables" section can be set here to override defaults.
-4.  **Deploy:** Hugging Face automatically builds and deploys the container, exposing port 7860.
+#### Docker Compose Example
 
-## Local Docker Setup
+Create a `docker-compose.yml` file on your server:
 
-### Prerequisites
+```yaml
+version: '3.8'
 
--   Docker and Docker Compose
--   Google Cloud Project with Vertex AI enabled.
--   Credentials: Either a Vertex AI Express API Key or one or more Service Account key files.
-
-### Credential Setup (Local)
-
-Manage environment variables using a [`.env`](.env) file in the project root (ignored by git) or within your [`docker-compose.yml`](docker-compose.yml).
-
-1.  **Method 1: Vertex Express API Key**
-    *   Set the [`VERTEX_EXPRESS_API_KEY`](app/config.py:0) environment variable.
-2.  **Method 2: Service Account JSON Content**
-    *   Set [`GOOGLE_CREDENTIALS_JSON`](app/config.py:0) to the full JSON content of your service account key(s). For multiple keys, separate the JSON objects with a comma (e.g., `{...},{...}`).
-3.  **Method 3: Service Account Files in Directory**
-    *   Ensure [`GOOGLE_CREDENTIALS_JSON`](app/config.py:0) is *not* set.
-    *   Create a directory (e.g., `mkdir credentials`).
-    *   Place your service account `.json` key files inside this directory.
-    *   Mount this directory to `/app/credentials` in the container (as shown in the default [`docker-compose.yml`](docker-compose.yml)). The service will use files found in the directory specified by [`CREDENTIALS_DIR`](app/config.py:0) (defaults to `/app/credentials`).
-
-### Environment Variables (`.env` file example)
-
-```env
-API_KEY="your_secure_api_key_here" # REQUIRED: Set a strong key for security
-APP_PORT=8050 # Optional: Port to expose on host
-
-# --- Choose *ONE* primary credential method ---
-# VERTEX_EXPRESS_API_KEY="your_vertex_express_key"          # Option 1: Express Key
-# GOOGLE_CREDENTIALS_JSON='{"type": ...}{"type": ...}' # Option 2: JSON content (comma-separate multiple keys)
-# CREDENTIALS_DIR="/app/credentials"                      # Option 3: Directory path (Default if GOOGLE_CREDENTIALS_JSON is unset, ensure volume mount in docker-compose)
-# ---
-
-# --- Optional Settings ---
-# ROUNDROBIN="true"              # Enable round-robin for Service Accounts (Method 2 or 3)
-# FAKE_STREAMING="false"         # For debugging - simulate streaming
-# FAKE_STREAMING_INTERVAL="1.0"  # Interval for fake streaming keep-alives
-# GCP_PROJECT_ID="your-gcp-project-id" # Explicitly set GCP Project ID if needed
-# GCP_LOCATION="us-central1"          # Explicitly set GCP Location if needed
+services:
+  vertex2openai:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/vertex2openai-adapter:latest
+    container_name: vertex2openai
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8050}:7860"
+    volumes:
+      - ./credentials:/app/credentials
+    env_file:
+      - .env
 ```
 
-### Running Locally
+### 2. Configuration
+
+Configuration is managed entirely through environment variables. You should create a `.env` file in the same directory as your `docker-compose.yml`.
+
+**Create a `.env` file:**
 
 ```bash
-# Build the image (if needed)
-docker-compose build
+# --- Essential Configuration ---
 
-# Start the service in detached mode
-docker-compose up -d
+# Port to expose on the host (default: 8050)
+APP_PORT=8050
+
+# API Key to protect this adapter service (REQUIRED)
+# You must set this to a strong password. Clients will use this key to authenticate.
+API_KEY=your_secure_password_here
+
+# --- Authentication (Choose One Method) ---
+
+# Method 1: Vertex AI Express API Key (Simplest)
+VERTEX_EXPRESS_API_KEY=your_vertex_express_key
+
+# Method 2: Google Cloud Service Account JSON Content
+# Paste the full content of your JSON key file here.
+GOOGLE_CREDENTIALS_JSON=
+
+# Method 3: Service Account File
+# Leave GOOGLE_CREDENTIALS_JSON empty and place your .json file in the ./credentials directory.
+# CREDENTIALS_DIR is set to /app/credentials by default in the container.
+
+# --- Optional Settings ---
+
+# Enable round-robin rotation if multiple credentials are provided
+ROUNDROBIN=false
+
+# Proxy settings (if your server needs a proxy to access Google APIs)
+# PROXY_URL=http://proxy.example.com:8080
 ```
-The service will typically be available at `http://localhost:8050` (check your [`docker-compose.yml`](docker-compose.yml)).
+
+### 3. Health Check
+
+The service provides a health check endpoint at `/health`. You can use this for uptime monitoring or container orchestration health probes.
+
+*   **Endpoint:** `GET /health`
+*   **Response:** `{"status": "healthy", "timestamp": 1234567890.123}`
 
 ## API Usage
 
@@ -113,7 +100,7 @@ The service will typically be available at `http://localhost:8050` (check your [
 
 -   `GET /v1/models`: Lists models accessible via the configured credentials/Vertex project.
 -   `POST /v1/chat/completions`: The main endpoint for generating text, mimicking the OpenAI chat completions API.
--   `GET /`: Basic health check/status endpoint.
+-   `GET /health`: Health check endpoint.
 
 ### Authentication
 
@@ -122,51 +109,7 @@ All requests to the adapter require an API key passed in the `Authorization` hea
 ```
 Authorization: Bearer YOUR_API_KEY
 ```
-Replace `YOUR_API_KEY` with the value you set for the [`API_KEY`](app/config.py:0) environment variable.
-
-### Example Request (`curl`)
-
-```bash
-curl -X POST http://localhost:8050/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your_secure_api_key_here" \
-  -d '{
-    "model": "gemini-1.5-flash-latest",
-    "messages": [
-      {"role": "system", "content": "You are a helpful coding assistant."},
-      {"role": "user", "content": "Explain the difference between lists and tuples in Python."}
-    ],
-    "temperature": 0.7,
-    "max_tokens": 150
-  }'
-```
-
-*(Adjust URL and API Key as needed)*
-
-## Credential Handling Priority
-
-The application selects credentials in this order:
-
-1.  **Vertex AI Express Mode:** If [`VERTEX_EXPRESS_API_KEY`](app/config.py:0) is set *and* the requested model is compatible with Express mode, this key is used via the [`ExpressKeyManager`](app/express_key_manager.py).
-2.  **Service Account Credentials:** If Express mode isn't used/applicable:
-    *   The [`CredentialManager`](app/credentials_manager.py) loads credentials first from the [`GOOGLE_CREDENTIALS_JSON`](app/config.py:0) environment variable (if set).
-    *   If [`GOOGLE_CREDENTIALS_JSON`](app/config.py:0) is *not* set, it loads credentials from `.json` files within the [`CREDENTIALS_DIR`](app/config.py:0).
-    *   If [`ROUNDROBIN`](app/config.py:0) is enabled (`true`), requests using Service Accounts will cycle through the loaded credentials. Otherwise, it typically uses the first valid credential found.
-
-## Key Environment Variables
-
-Managed in [`app/config.py`](app/config.py) and loaded from the environment:
-
--   `API_KEY`: **Required.** Secret key to authenticate requests *to this adapter*.
--   `APP_PORT`: Optional. Port to expose on the host (default: 8050).
--   `VERTEX_EXPRESS_API_KEY`: Optional. Your Vertex AI Express API key for simplified authentication.
--   `GOOGLE_CREDENTIALS_JSON`: Optional. String containing the JSON content of one or more service account keys (comma-separated for multiple). Takes precedence over `CREDENTIALS_DIR` for service accounts.
--   `CREDENTIALS_DIR`: Optional. Path *within the container* where service account `.json` files are located. Used only if `GOOGLE_CREDENTIALS_JSON` is not set. (Default: `/app/credentials`)
--   `ROUNDROBIN`: Optional. Set to `"true"` to enable round-robin selection among loaded Service Account credentials. (Default: `"false"`)
--   `GCP_PROJECT_ID`: Optional. Explicitly set the Google Cloud Project ID. If not set, attempts to infer from credentials.
--   `GCP_LOCATION`: Optional. Explicitly set the Google Cloud Location (region). If not set, attempts to infer or uses Vertex AI defaults.
--   `FAKE_STREAMING`: Optional. Set to `"true"` to simulate streaming output for testing. (Default: `"false"`)
--   `FAKE_STREAMING_INTERVAL`: Optional. Interval (seconds) for keep-alive messages during fake streaming. (Default: `1.0`)
+Replace `YOUR_API_KEY` with the value you set for the `API_KEY` environment variable.
 
 ## License
 
