@@ -5,8 +5,8 @@ services:
     build: .
     container_name: vertex2openai
     ports:
-      # Map host port 8050 to container port 7860 (for Hugging Face compatibility)
-      - "${APP_PORT:-8050}:7860"
+      # Map host port to container port 8050
+      - "${APP_PORT:-8050}:8050"
     volumes:
       - ./credentials:/app/credentials
     env_file:

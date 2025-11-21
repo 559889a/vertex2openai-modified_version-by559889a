@@ -4,7 +4,7 @@ emoji: 🔄☁️
 colorFrom: blue
 colorTo: green
 sdk: docker
-app_port: 7860
+app_port: 8050
 ---
 
 # OpenAI to Gemini Adapter
@@ -50,7 +50,7 @@ services:
     container_name: vertex2openai
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-8050}:7860"
+      - "${APP_PORT:-8050}:8050"
     volumes:
       - ./credentials:/app/credentials
     env_file:
