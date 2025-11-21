@@ -247,11 +247,21 @@ async def chat_completions(fastapi_request: Request, request: OpenAIRequest, api
                 else:
                     gen_config_dict["tools"] = [search_tool]
             
-            # For encrypted models, system instructions are handled by the prompt_func
+            # For encrypted models, add encryption instructions to system_instruction
             elif is_encrypted_model:
                 current_prompt_func = create_encrypted_gemini_prompt
+                # 将加密指令添加到 system_instruction
+                if "system_instruction" in gen_config_dict and gen_config_dict["system_instruction"]:
+                    gen_config_dict["system_instruction"] = f"{ENCRYPTION_INSTRUCTIONS}\n\n{gen_config_dict['system_instruction']}"
+                else:
+                    gen_config_dict["system_instruction"] = ENCRYPTION_INSTRUCTIONS
             elif is_encrypted_full_model:
                 current_prompt_func = create_encrypted_full_gemini_prompt
+                # 加密全模式也需要加密指令
+                if "system_instruction" in gen_config_dict and gen_config_dict["system_instruction"]:
+                    gen_config_dict["system_instruction"] = f"{ENCRYPTION_INSTRUCTIONS}\n\n{gen_config_dict['system_instruction']}"
+                else:
+                    gen_config_dict["system_instruction"] = ENCRYPTION_INSTRUCTIONS
             
             # Ensure thinking_config is a dictionary before updating
             if not isinstance(gen_config_dict.get("thinking_config"), dict):

@@ -15,7 +15,8 @@ from message_processing import (
     convert_to_openai_format,
     convert_chunk_to_openai,
     extract_reasoning_by_tags,
-    _create_safety_ratings_html
+    _create_safety_ratings_html,
+    extract_system_instruction
 )
 import config as app_config
 from config import VERTEX_REASONING_TAG
@@ -415,13 +416,24 @@ async def openai_fake_stream_generator(
 
 
 async def execute_gemini_call(
-    current_client: Any, 
-    model_to_call: str,  
-    prompt_func: Callable[[List[OpenAIMessage]], List[types.Content]], 
-    gen_config_dict: Dict[str, Any], 
-    request_obj: OpenAIRequest, 
+    current_client: Any,
+    model_to_call: str,
+    prompt_func: Callable[[List[OpenAIMessage]], List[types.Content]],
+    gen_config_dict: Dict[str, Any],
+    request_obj: OpenAIRequest,
     is_auto_attempt: bool = False
 ):
+    # 提取 system instruction 并添加到配置
+    system_instruction = extract_system_instruction(request_obj.messages)
+    if system_instruction:
+        # 如果已有 system_instruction，合并（保留原有的优先）
+        if "system_instruction" in gen_config_dict and gen_config_dict["system_instruction"]:
+            # 将提取的 system instruction 添加到现有的后面
+            gen_config_dict["system_instruction"] = f"{gen_config_dict['system_instruction']}\n\n{system_instruction}"
+        else:
+            gen_config_dict["system_instruction"] = system_instruction
+        print(f"INFO: Extracted system instruction (length: {len(system_instruction)} chars)")
+    
     actual_prompt_for_call = prompt_func(request_obj.messages)
     client_model_name_for_log = getattr(current_client, 'model_name', 'unknown_direct_client_object')
     print(f"INFO: execute_gemini_call for requested API model '{model_to_call}', using client object with internal name '{client_model_name_for_log}'. Original request model: '{request_obj.model}'")
