@@ -88,6 +88,10 @@ GOOGLE_CREDENTIALS_JSON=
 # Leave GOOGLE_CREDENTIALS_JSON empty and place your .json file in the ./credentials directory.
 # CREDENTIALS_DIR is set to /app/credentials by default in the container.
 
+# --- GCP Configuration (Optional but recommended for Express Mode) ---
+# GCP_PROJECT_ID=your-gcp-project-id
+# GCP_LOCATION=us-central1
+
 # --- Optional Settings ---
 
 # Enable round-robin rotation if multiple credentials are provided

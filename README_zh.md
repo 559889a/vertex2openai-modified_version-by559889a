@@ -86,6 +86,10 @@ GOOGLE_CREDENTIALS_JSON=
 # 保持 GOOGLE_CREDENTIALS_JSON 为空，并将 .json 文件放入 ./credentials 目录。
 # 容器内默认读取 /app/credentials 目录。
 
+# --- GCP 配置 (可选，但推荐用于 Express 模式) ---
+# GCP_PROJECT_ID=your-gcp-project-id
+# GCP_LOCATION=us-central1
+
 # --- 可选设置 ---
 
 # 如果提供多个凭证，是否启用轮询模式
