@@ -37,19 +37,17 @@ _cache_lock = asyncio.Lock()
 # 默认支持的 Gemini 模型列表（当 API 不可用时使用）
 DEFAULT_GEMINI_MODELS = [
     "gemini-2.0-flash",
-    "gemini-2.0-flash-exp",
+    "gemini-2.0-flash-001",
     "gemini-2.0-flash-lite",
     "gemini-2.0-flash-lite-001",
-    "gemini-2.0-flash-001",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-preview-04-17",
-    "gemini-2.5-flash-preview-05-20",
-    "gemini-2.5-flash-preview-native-audio-dialog",
+    "gemini-2.5-flash-image",
+    "gemini-2.5-flash-image-preview",
+    "gemini-2.5-flash-lite-preview-09-2025",
+    "gemini-2.5-flash-preview-09-2025",
     "gemini-2.5-pro",
-    "gemini-2.5-pro-preview-05-06",
-    "gemini-2.5-pro-preview-06-05",
+    "gemini-3-pro-image-preview",
     "gemini-3-pro-preview",
-    "gemini-3-pro-image-generation-preview",
 ]
 
 # 别名模型配置 - 自动注入 thinking 配置
